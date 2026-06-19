@@ -1,12 +1,9 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>MindForge · 让碎片笔记自动生长为知识网络</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg:#06070d;
@@ -250,7 +247,9 @@
       radial-gradient(circle at 50% 50%,rgba(255,94,156,.05),transparent 60%),
       linear-gradient(135deg,#06070d,#0a0c14);
     border:1px solid rgba(255,255,255,.04);position:relative;overflow:hidden;
+    padding:8px;box-sizing:border-box;
   }
+  .graph > svg.graph{position:absolute;inset:8px;width:auto;height:auto}
   /* 图谱背景网格 - 增加科技感 */
   .graph::before{
     content:"";position:absolute;inset:0;pointer-events:none;opacity:.4;
@@ -1172,111 +1171,56 @@ function renderGraph(data){
   const svg = document.getElementById('graphSvg');
   svg.innerHTML = '';
   const W = 820, H = 540, cx = W/2, cy = H/2;
-  const PAD_X = 116, PAD_Y = 74;
-  const { nodes, edges } = data;
+  svg.setAttribute('viewBox', '0 0 '+W+' '+H);
+  svg.setAttribute('preserveAspectRatio','xMidYMid meet');
+
+  const rawNodes = data.nodes || [];
+  const rawEdges = data.edges || [];
+  const topic = rawNodes.find(n=>n.type==='topic') || rawNodes[0];
+  const concepts = rawNodes.filter(n=>n.type==='concept').sort((a,b)=>b.weight-a.weight).slice(0,6);
+  const methods = rawNodes.filter(n=>n.type==='method').sort((a,b)=>b.weight-a.weight).slice(0,4);
+  const notes = rawNodes.filter(n=>n.type==='note').sort((a,b)=>b.weight-a.weight).slice(0,4);
+  const nodes = [topic].concat(concepts, methods, notes).filter(Boolean);
+  const idSet = new Set(nodes.map(n=>n.id));
+  const edges = rawEdges.filter(e=>idSet.has(e.a)&&idSet.has(e.b));
   graphData = { nodes, edges };
-  function seenNode(id){ return nodes.find(function(n){return n.id===id;}); }
-  function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+  function seenNode(id){ return nodes.find(n=>n.id===id); }
   function estimateLabelWidth(label){
     const text = String(label || '');
-    const cn = (text.match(/[一-龥]/g)||[]).length;
+    const cn = (text.match(/[\u4e00-\u9fa5]/g)||[]).length;
     return cn*12 + (text.length-cn)*7 + 12;
   }
-
-  const topicNodes = nodes.filter(function(n){ return n.type==='topic'; });
-  const conceptNodes = nodes.filter(function(n){ return n.type==='concept'; });
-  const methodNodes = nodes.filter(function(n){ return n.type==='method'; });
-  const noteNodes = nodes.filter(function(n){ return n.type==='note'; });
-
-  function scatter(arr, cx_, cy_, R, jitter){
-    const shuffled = arr.slice().sort(function(){return Math.random()-0.5;});
-    for (let i=0;i<shuffled.length;i++){
-      const n = shuffled[i];
-      const a = (i/Math.max(shuffled.length,1))*Math.PI*2 + Math.random()*0.3;
-      n.x = cx_ + R*Math.cos(a) + (Math.random()-0.5)*jitter;
-      n.y = cy_ + R*Math.sin(a) + (Math.random()-0.5)*jitter;
-      n.vx = 0; n.vy = 0;
-    }
-  }
-  topicNodes.forEach(function(n){ n.x = cx+(Math.random()-0.5)*30; n.y = cy+(Math.random()-0.5)*30; n.vx=0; n.vy=0; });
-  const innerMixed = conceptNodes.concat(methodNodes);
-  scatter(innerMixed, cx, cy, 160, 60);
-  scatter(noteNodes, cx, cy, 290, 80);
-
-  const iterations = 150;
-  for(let it=0;it<iterations;it++){
-    for(let i=0;i<nodes.length;i++){
-      for(let j=i+1;j<nodes.length;j++){
-        const a=nodes[i], b=nodes[j];
-        const dx=b.x-a.x, dy=b.y-a.y, d2=dx*dx+dy*dy+0.01;
-        const f = (55*55)/Math.sqrt(d2) * 0.018;
-        a.vx -= dx*f; a.vy -= dy*f; b.vx += dx*f; b.vy += dy*f;
-      }
-    }
-    edges.forEach(function(e){
-      const a=seenNode(e.a), b=seenNode(e.b);
-      if(!a||!b) return;
-      const dx=b.x-a.x, dy=b.y-a.y, d=Math.sqrt(dx*dx+dy*dy)+0.01;
-      const targetLen = (a.type==='topic'||b.type==='topic')?100 : 130;
-      const f = (d-targetLen)*0.02*e.strength;
-      a.vx += dx/d*f; a.vy += dy/d*f; b.vx -= dx/d*f; b.vy -= dy/d*f;
-    });
-    nodes.forEach(function(n){
-      const pullStrength = n.type==='topic'?0.008 : n.type==='note'?0.001 : 0.004;
-      n.vx += (cx-n.x)*pullStrength; n.vy += (cy-n.y)*pullStrength;
-      n.vx *= 0.84; n.vy *= 0.84;
-      n.x += n.vx; n.y += n.vy;
-      n.x = clamp(n.x, PAD_X, W-PAD_X);
-      n.y = clamp(n.y, PAD_Y, H-PAD_Y);
-    });
+  function shortLabel(n){
+    const isEn = /^[a-z][a-z0-9\-]*$/i.test(n.label);
+    const max = n.type==='topic' ? 9 : (isEn ? 8 : 5);
+    let text = n.label.length > max ? n.label.slice(0,max)+'…' : n.label;
+    if(isEn && n.type!=='topic') text = text.split('-').map(s=>s.charAt(0).toUpperCase()+s.slice(1)).join('-');
+    return text;
   }
 
-  nodes.forEach(function(n){
-    const dx = n.x-cx, dy = n.y-cy;
-    const angle = Math.atan2(dy, dx);
-    if(n.type==='topic') n._anchor='top';
-    else if(n.type==='note') n._anchor = (dx>0?'right':'left');
-    else {
-      if(angle>-Math.PI/4 && angle<Math.PI/4) n._anchor='right';
-      else if(angle>=Math.PI/4 && angle<=3*Math.PI/4) n._anchor='bottom';
-      else if(angle<=-Math.PI/4 && angle>=-3*Math.PI/4) n._anchor='top';
-      else n._anchor='left';
-    }
-    const isEn = /^[a-z][a-z0-9\-]*$/.test(n.label);
-    const cnCount = (n.label.match(/[\u4e00-\u9fa5]/g)||[]).length;
-    if(isEn){
-      n._short = n.label.length > 14 ? n.label.slice(0,14)+'...' : n.label;
-    } else if(n.type==='topic'){
-      n._short = n.label.length > 14 ? n.label.slice(0,14)+'...' : n.label;
-    } else {
-      const maxLen = cnCount > 0 ? 10 : 12;
-      n._short = n.label.length > maxLen ? n.label.slice(0,maxLen)+'...' : n.label;
-    }
-    if(isEn && n.type!=='topic'){
-      n._short = n._short.split('-').map(function(s){ return s.charAt(0).toUpperCase()+s.slice(1); }).join('-');
-    }
-  });
-
-  ['top','bottom','left','right'].forEach(function(anc){
-    const group = nodes.filter(function(n){ return n._anchor===anc && n.type!=='topic'; }).sort(function(a,b){
-      if(anc==='left'||anc==='right') return a.y-b.y; return a.x-b.x;
-    });
-    for(let i=1;i<group.length;i++){
-      const prev=group[i-1], cur=group[i];
-      const estWLabel = function(l){ const cn=(l.match(/[\u4e00-\u9fa5]/g)||[]).length; return cn*14+(l.length-cn)*8+10; };
-      if(anc==='top'||anc==='bottom'){
-        const gap=(estWLabel(prev._short)+estWLabel(cur._short))/2+8;
-        if(Math.abs(cur.x-prev.x)<gap) cur.x = prev.x+gap;
-      } else {
-        if(Math.abs(cur.y-prev.y)<22) cur.y = prev.y+22;
-      }
-    }
-  });
-  nodes.forEach(function(n){
-    const labelHalf = estimateLabelWidth(n._short)/2;
-    const sidePad = Math.max(PAD_X, labelHalf + 42);
-    n.x = clamp(n.x, sidePad, W-sidePad);
-    n.y = clamp(n.y, PAD_Y, H-PAD_Y);
+  const slots = {
+    topic: [{x:410,y:260,a:'top'}],
+    concept: [
+      {x:250,y:115,a:'top'}, {x:570,y:115,a:'top'},
+      {x:190,y:260,a:'left'}, {x:630,y:260,a:'right'},
+      {x:250,y:405,a:'bottom'}, {x:570,y:405,a:'bottom'}
+    ],
+    method: [
+      {x:410,y:95,a:'top'}, {x:705,y:185,a:'right'},
+      {x:410,y:445,a:'bottom'}, {x:115,y:185,a:'left'}
+    ],
+    note: [
+      {x:115,y:455,a:'left'}, {x:705,y:455,a:'right'},
+      {x:115,y:85,a:'left'}, {x:705,y:85,a:'right'}
+    ]
+  };
+  const counters = {topic:0,concept:0,method:0,note:0};
+  nodes.forEach(n=>{
+    n._short = shortLabel(n);
+    const list = slots[n.type] || slots.concept;
+    const slot = list[counters[n.type] % list.length];
+    counters[n.type]++;
+    n.x = slot.x; n.y = slot.y; n._anchor = slot.a;
   });
 
   const defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
@@ -1284,21 +1228,16 @@ function renderGraph(data){
   glow.setAttribute('id','glow'); glow.setAttribute('x','-60%'); glow.setAttribute('y','-60%');
   glow.setAttribute('width','220%'); glow.setAttribute('height','220%');
   const gauss = document.createElementNS('http://www.w3.org/2000/svg','feGaussianBlur');
-  gauss.setAttribute('stdDeviation','3.5'); glow.appendChild(gauss);
-  defs.appendChild(glow);
-  svg.appendChild(defs);
+  gauss.setAttribute('stdDeviation','3.5'); glow.appendChild(gauss); defs.appendChild(glow); svg.appendChild(defs);
 
   const gEdges = document.createElementNS('http://www.w3.org/2000/svg','g');
   edges.forEach(function(e){
-    const a=seenNode(e.a), b=seenNode(e.b);
-    if(!a||!b) return;
+    const a=seenNode(e.a), b=seenNode(e.b); if(!a||!b) return;
     const line=document.createElementNS('http://www.w3.org/2000/svg','line');
-    line.setAttribute('x1',a.x); line.setAttribute('y1',a.y);
-    line.setAttribute('x2',b.x); line.setAttribute('y2',b.y);
-    line.setAttribute('class','edge');
-    line.setAttribute('data-edge',(e.a<e.b?e.a+'|'+e.b:e.b+'|'+e.a));
-    line.setAttribute('stroke-opacity',0.22+Math.min(0.55,e.strength*0.2));
-    line.setAttribute('stroke-width',1+Math.min(1.4,e.strength*0.45));
+    line.setAttribute('x1',a.x); line.setAttribute('y1',a.y); line.setAttribute('x2',b.x); line.setAttribute('y2',b.y);
+    line.setAttribute('class','edge'); line.setAttribute('data-edge',(e.a<e.b?e.a+'|'+e.b:e.b+'|'+e.a));
+    line.setAttribute('stroke-opacity',0.20+Math.min(0.45,e.strength*0.16));
+    line.setAttribute('stroke-width',1+Math.min(1.2,e.strength*0.35));
     gEdges.appendChild(line);
   });
   svg.appendChild(gEdges);
@@ -1306,108 +1245,95 @@ function renderGraph(data){
   const gNodes = document.createElementNS('http://www.w3.org/2000/svg','g');
   nodes.forEach(function(n){
     const g=document.createElementNS('http://www.w3.org/2000/svg','g');
-    g.setAttribute('class','node');
-    g.setAttribute('transform','translate('+n.x+','+n.y+')');
-    g.style.color = COLORS[n.type];
-    const r = n.type==='topic'? 11 : 5+Math.min(8,n.weight*4);
-
+    g.setAttribute('class','node'); g.setAttribute('transform','translate('+n.x+','+n.y+')'); g.style.color = COLORS[n.type];
+    const r = n.type==='topic'? 14 : 10;
     const halo=document.createElementNS('http://www.w3.org/2000/svg','circle');
-    halo.setAttribute('r',r+12); halo.setAttribute('fill',COLORS[n.type]);
-    halo.setAttribute('fill-opacity','0.06'); halo.setAttribute('filter','url(#glow)');
-    g.appendChild(halo);
-
+    halo.setAttribute('r',r+12); halo.setAttribute('fill',COLORS[n.type]); halo.setAttribute('fill-opacity','0.06'); halo.setAttribute('filter','url(#glow)'); g.appendChild(halo);
     const ring=document.createElementNS('http://www.w3.org/2000/svg','circle');
-    ring.setAttribute('r',r+3); ring.setAttribute('fill','none');
-    ring.setAttribute('stroke',COLORS[n.type]); ring.setAttribute('stroke-opacity','0.3');
-    g.appendChild(ring);
-
+    ring.setAttribute('r',r+4); ring.setAttribute('fill','none'); ring.setAttribute('stroke',COLORS[n.type]); ring.setAttribute('stroke-opacity','0.35'); g.appendChild(ring);
     const circle=document.createElementNS('http://www.w3.org/2000/svg','circle');
-    circle.setAttribute('r',r); circle.setAttribute('fill',COLORS[n.type]);
-    circle.setAttribute('fill-opacity','0.95'); circle.setAttribute('stroke','rgba(255,255,255,.5)');
-    circle.setAttribute('stroke-width','1'); g.appendChild(circle);
+    circle.setAttribute('r',r); circle.setAttribute('fill',COLORS[n.type]); circle.setAttribute('fill-opacity','0.95'); circle.setAttribute('stroke','rgba(255,255,255,.55)'); circle.setAttribute('stroke-width','1'); g.appendChild(circle);
 
     const lead=document.createElementNS('http://www.w3.org/2000/svg','line');
-    lead.setAttribute('stroke',COLORS[n.type]); lead.setAttribute('stroke-opacity','0.4'); lead.setAttribute('stroke-width','1');
+    lead.setAttribute('stroke',COLORS[n.type]); lead.setAttribute('stroke-opacity','0.42'); lead.setAttribute('stroke-width','1');
     const label=document.createElementNS('http://www.w3.org/2000/svg','text');
     label.setAttribute('class', n.type==='topic'?'tt-top':'tt-'+n.type);
-
-    // Keep labels inside the SVG viewport. The old layout placed edge labels
-    // outside the visible area, so long labels were clipped on both sides.
-    let anchor = n._anchor;
-    const labelW = estimateLabelWidth(n._short);
-    if(anchor==='left' && n.x - (r+16) - labelW < 8) anchor = 'right';
-    if(anchor==='right' && n.x + (r+16) + labelW > W-8) anchor = 'left';
-    if(anchor==='top' && n.y - (r+18) < 8) anchor = 'bottom';
-    if(anchor==='bottom' && n.y + (r+24) > H-8) anchor = 'top';
-
+    const anchor = n._anchor;
     if(anchor==='top'){
       lead.setAttribute('x1',0); lead.setAttribute('y1',-r); lead.setAttribute('x2',0); lead.setAttribute('y2',-r-10);
-      label.setAttribute('x',0); label.setAttribute('y',-r-13); label.setAttribute('text-anchor','middle');
+      label.setAttribute('x',0); label.setAttribute('y',-r-14); label.setAttribute('text-anchor','middle');
     } else if(anchor==='bottom'){
       lead.setAttribute('x1',0); lead.setAttribute('y1',r); lead.setAttribute('x2',0); lead.setAttribute('y2',r+10);
-      label.setAttribute('x',0); label.setAttribute('y',r+22); label.setAttribute('text-anchor','middle');
+      label.setAttribute('x',0); label.setAttribute('y',r+23); label.setAttribute('text-anchor','middle');
     } else if(anchor==='left'){
       lead.setAttribute('x1',-r); lead.setAttribute('y1',0); lead.setAttribute('x2',-r-10); lead.setAttribute('y2',0);
-      label.setAttribute('x',-r-13); label.setAttribute('y',5); label.setAttribute('text-anchor','end');
+      label.setAttribute('x',-r-14); label.setAttribute('y',5); label.setAttribute('text-anchor','end');
     } else {
       lead.setAttribute('x1',r); lead.setAttribute('y1',0); lead.setAttribute('x2',r+10); lead.setAttribute('y2',0);
-      label.setAttribute('x',r+13); label.setAttribute('y',5); label.setAttribute('text-anchor','start');
+      label.setAttribute('x',r+14); label.setAttribute('y',5); label.setAttribute('text-anchor','start');
     }
-    g.appendChild(lead);
     label.textContent = n._short;
     const tip=document.createElementNS('http://www.w3.org/2000/svg','title');
     tip.textContent = n.label + (n.extra && n.extra.count? ' - appeared ' + n.extra.count + ' times' : '');
-    g.appendChild(tip); g.appendChild(label);
+    g.appendChild(lead); g.appendChild(tip); g.appendChild(label);
 
     g.addEventListener('mouseenter',function(){
       edges.forEach(function(e){
         if(e.a===n.id||e.b===n.id){
           const key = e.a<e.b?e.a+'|'+e.b:e.b+'|'+e.a;
-          const el = svg.querySelector('[data-edge="'+key+'"]');
-          if(el) el.classList.add('hi');
+          const el = svg.querySelector('[data-edge="'+key+'"]'); if(el) el.classList.add('hi');
         }
       });
       document.getElementById('graphStage').textContent = '聚焦：'+n.label;
     });
-    g.addEventListener('mouseleave',function(){
-      svg.querySelectorAll('.edge.hi').forEach(function(el){ el.classList.remove('hi'); });
-      document.getElementById('graphStage').textContent = '已生成';
+    g.addEventListener('mouseleave',function(){ svg.querySelectorAll('.edge.hi').forEach(el=>el.classList.remove('hi')); document.getElementById('graphStage').textContent='已生成'; });
+    let dragMoved = false;
+    function updateConnectedEdges(){
+      svg.querySelectorAll('[data-edge]').forEach(function(ln){
+        const key = ln.getAttribute('data-edge');
+        const parts = key.split('|');
+        if(parts[0] !== n.id && parts[1] !== n.id) return;
+        const na = seenNode(parts[0]), nb = seenNode(parts[1]);
+        if(!na || !nb) return;
+        ln.setAttribute('x1',na.x); ln.setAttribute('y1',na.y);
+        ln.setAttribute('x2',nb.x); ln.setAttribute('y2',nb.y);
+      });
+    }
+    g.style.cursor = 'grab';
+    g.addEventListener('mousedown',function(ev){
+      dragMoved = false;
+      g.style.cursor = 'grabbing';
+      ev.preventDefault(); ev.stopPropagation();
+      const startX = ev.clientX, startY = ev.clientY;
+      const startNodeX = n.x, startNodeY = n.y;
+      function move(ev2){
+        const rect = svg.getBoundingClientRect();
+        const dx = (ev2.clientX - startX) * (W / rect.width);
+        const dy = (ev2.clientY - startY) * (H / rect.height);
+        if(Math.abs(dx)+Math.abs(dy) > 2) dragMoved = true;
+        const labelHalf = estimateLabelWidth(n._short || n.label) / 2;
+        const sidePad = Math.max(70, labelHalf + 36);
+        n.x = Math.max(sidePad, Math.min(W-sidePad, startNodeX + dx));
+        n.y = Math.max(48, Math.min(H-48, startNodeY + dy));
+        g.setAttribute('transform','translate('+n.x+','+n.y+')');
+        updateConnectedEdges();
+      }
+      function up(){
+        g.style.cursor = 'grab';
+        document.removeEventListener('mousemove',move);
+        document.removeEventListener('mouseup',up);
+      }
+      document.addEventListener('mousemove',move);
+      document.addEventListener('mouseup',up);
     });
-    g.addEventListener('click',function(){
+    g.addEventListener('click',function(ev){
+      if(dragMoved){ dragMoved = false; ev.preventDefault(); ev.stopPropagation(); return; }
       if(n.type==='topic'||n.type==='note'){
         const nid = n.extra? n.extra.noteId : null;
         if(nid){ currentNoteId=nid; openNote(nid); topSearchEl.value=''; renderNotes(); analyze(); toast('已打开：'+n.label); }
       } else {
-        document.getElementById('miniSearch').value = n.label;
-        runMiniSearch(n.label);
-        toast('已搜索：'+n.label);
+        document.getElementById('miniSearch').value = n.label; runMiniSearch(n.label); toast('已搜索：'+n.label);
       }
-    });
-
-    g.style.cursor='grab';
-    g.addEventListener('mousedown',function(ev){
-      let dragging=true; g.style.cursor='grabbing'; ev.stopPropagation();
-      function mm(ev2){
-        if(!dragging) return;
-        const rect = svg.getBoundingClientRect();
-        n.x = Math.max(40,Math.min(W-40,(ev2.clientX-rect.left)*(W/rect.width)));
-        n.y = Math.max(40,Math.min(H-40,(ev2.clientY-rect.top)*(H/rect.height)));
-        g.setAttribute('transform','translate('+n.x+','+n.y+')');
-        svg.querySelectorAll('[data-edge]').forEach(function(ln){
-          const key = ln.getAttribute('data-edge');
-          const parts = key.split('|');
-          if(parts[0] !== n.id && parts[1] !== n.id) return;
-          const na = seenNode(parts[0]), nb = seenNode(parts[1]);
-          if(!na||!nb) return;
-          ln.setAttribute('x1',na.x); ln.setAttribute('y1',na.y);
-          ln.setAttribute('x2',nb.x); ln.setAttribute('y2',nb.y);
-        });
-      }
-      function mu(){
-        dragging=false; g.style.cursor='grab';
-        document.removeEventListener('mousemove',mm); document.removeEventListener('mouseup',mu);
-      }
-      document.addEventListener('mousemove',mm); document.addEventListener('mouseup',mu);
     });
     gNodes.appendChild(g);
   });
@@ -1415,20 +1341,11 @@ function renderGraph(data){
 
   document.getElementById('nodeCount').textContent = nodes.length;
   document.getElementById('edgeCount').textContent = edges.length;
-  const covSet = new Set();
-  edges.forEach(function(e){
-    if(/^n_/.test(e.a)) covSet.add(e.a);
-    if(/^n_/.test(e.b)) covSet.add(e.b);
-  });
-  document.getElementById('noteCoverage').textContent = covSet.size;
-  document.getElementById('sNodes').textContent = nodes.length;
-  document.getElementById('sEdges').textContent = edges.length;
-  document.getElementById('sTags').textContent = data.tags? data.tags.length : 0;
-  document.getElementById('sDensity').textContent = nodes.length>1 ? (edges.length/(nodes.length*(nodes.length-1)/2)).toFixed(2) : '0.00';
+  document.getElementById('noteCoverage').textContent = Math.min(99, Math.round((nodes.length/rawNodes.length)*100)) + '%';
   document.getElementById('graphStage').textContent = '已生成';
   document.getElementById('graphPill').textContent = '已生成';
+  document.getElementById('status').textContent = 'AI 已分析';
 }
-
 
 /* -------- 8. 标签 & 推荐（含关联理由 + 知识点推荐） -------- */
 function commonKeywords(a, b){
@@ -1687,3 +1604,4 @@ analyze();
 </script>
 </body>
 </html>
+
